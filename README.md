@@ -352,6 +352,7 @@ Visit the server root URL (`/`) for setup instructions and a ready-to-copy clien
 | `GCLOUD_PROJECT`                 | GCP project ID for Firestore (required when `TOKEN_STORE=firestore`)                                                          |
 | `MCP_STATELESS`                  | Set to `true` for serverless deployments (Cloud Run, etc.) — disables session tracking to survive scale-to-zero               |
 | `GOOGLE_DOCS_MCP_DOWNLOAD_ROOTS` | Directories `downloadFile` may write to in stdio mode, delimited by `:` (`;` on Windows). Defaults to the working directory   |
+| `GMAIL_ATTACHMENT_ROOTS`         | Directories Gmail drafts may attach files from in stdio mode, delimited by `:` (`;` on Windows). Unset disables attachments   |
 
 ### Setup
 
