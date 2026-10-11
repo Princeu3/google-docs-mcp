@@ -94,7 +94,7 @@ const entryPoints = [
     name: 'updateDraft',
     register: registerUpdateDraft,
     extraArgs: { draftId: 'r-1' },
-    message: {},
+    message: { threadId: 't-1' },
     api: (gmail: MockGmail) => gmail.users.drafts.update,
   },
 ];
@@ -233,6 +233,67 @@ describe('createDraft', () => {
     expect(result.success).toBe(true);
     expect(result.draftId).toBe('r-1');
     expect(result.from).toBeNull();
+  });
+});
+
+describe('updateDraft threading', () => {
+  const update = { draftId: 'r-1', to: 'a@example.com', subject: 'Re: Invoice', body: 'Revised.' };
+
+  it('keeps a reply draft in its thread when replyToMessageId is left out', async () => {
+    const gmail = createMockGmail();
+    gmail.users.drafts.get.mockResolvedValue({
+      data: {
+        id: 'r-1',
+        message: {
+          id: 'm-1',
+          threadId: 't-9',
+          payload: {
+            headers: [
+              { name: 'In-Reply-To', value: '<orig@mail.example>' },
+              { name: 'References', value: '<first@mail.example> <orig@mail.example>' },
+            ],
+          },
+        },
+      },
+    });
+
+    await captureTool(registerUpdateDraft).execute(update, { log: mockLog });
+
+    const { message } = gmail.users.drafts.update.mock.calls[0][0].requestBody;
+    expect(message.threadId).toBe('t-9');
+    const mime = Buffer.from(message.raw, 'base64url').toString('utf-8');
+    expect(mime).toContain('In-Reply-To: <orig@mail.example>');
+    expect(mime).toContain('References: <first@mail.example> <orig@mail.example>');
+  });
+
+  it('threads with replyToMessageId, not the old draft, when one is given', async () => {
+    const gmail = createMockGmail();
+    gmail.users.messages.get.mockResolvedValue({
+      data: {
+        threadId: 't-5',
+        payload: { headers: [{ name: 'Message-Id', value: '<new@mail.example>' }] },
+      },
+    });
+
+    await captureTool(registerUpdateDraft).execute(
+      { ...update, replyToMessageId: 'm-5' },
+      { log: mockLog }
+    );
+
+    expect(gmail.users.drafts.get).not.toHaveBeenCalled();
+    expect(gmail.users.drafts.update.mock.calls[0][0].requestBody.message.threadId).toBe('t-5');
+  });
+
+  it('reports a missing draft without trying to update it', async () => {
+    const gmail = createMockGmail();
+    gmail.users.drafts.get.mockRejectedValue(Object.assign(new Error('Not Found'), { code: 404 }));
+
+    const error = await captureTool(registerUpdateDraft)
+      .execute(update, { log: mockLog })
+      .catch((e: unknown) => e);
+
+    expect((error as Error).message).toBe('Draft not found (ID: r-1).');
+    expect(gmail.users.drafts.update).not.toHaveBeenCalled();
   });
 });
 

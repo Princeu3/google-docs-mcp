@@ -15,14 +15,14 @@ Tools for reading, drafting, sending, deleting, organizing, and triaging Gmail m
 
 ## Drafts (compose / review / send)
 
-| Tool          | Description                                                                                      |
-| ------------- | ------------------------------------------------------------------------------------------------ |
-| `createDraft` | Creates a draft instead of sending. Use this when an AI composes an email the user should review |
-| `listDrafts`  | Lists drafts with recipients, subject, and snippet                                               |
-| `getDraft`    | Fetches one draft with full headers, body, and attachment metadata                               |
-| `updateDraft` | Replaces a draft's contents (full replace, not patch). Use to iterate before sending             |
-| `sendDraft`   | Sends an existing draft by ID — pairs with `createDraft` for the compose-review-send loop        |
-| `deleteDraft` | Permanently deletes a draft. Not moved to Trash — gone                                           |
+| Tool          | Description                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `createDraft` | Creates a draft instead of sending. Use this when an AI composes an email the user should review                                                 |
+| `listDrafts`  | Lists drafts with recipients, subject, and snippet                                                                                               |
+| `getDraft`    | Fetches one draft with full headers, body, and attachment metadata                                                                               |
+| `updateDraft` | Replaces a draft's contents (full replace, not patch), keeping its thread unless `replyToMessageId` names another. Use to iterate before sending |
+| `sendDraft`   | Sends an existing draft by ID — pairs with `createDraft` for the compose-review-send loop                                                        |
+| `deleteDraft` | Permanently deletes a draft. Not moved to Trash — gone                                                                                           |
 
 `createDraft` also returns `from`, the address of the account the draft was created in.
 
