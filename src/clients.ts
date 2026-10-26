@@ -49,7 +49,7 @@ export async function initializeGoogleClient() {
       googleScript = null;
       googleGmail = null;
       googleCalendar = null;
-      throw new Error('Google client initialization failed. Cannot start server tools.');
+      throw new Error(`Google client initialization failed: ${(error as Error)?.message || error}`);
     }
   }
   if (authClient && !googleDocs) {

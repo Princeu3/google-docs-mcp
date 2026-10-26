@@ -108,6 +108,34 @@ export function createStoredTokenPayload(
  *   1. GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET env vars (npx / production)
  *   2. credentials.json in the project root (local dev fallback)
  */
+export function describeMissingCredentials(
+  credentialsPath: string,
+  envId?: string,
+  envSecret?: string
+): string {
+  // A half-configured environment is the most confusing case: the user believes
+  // they configured the server, so "no credentials found" reads as a bug.
+  if (envId && !envSecret) {
+    return (
+      'GOOGLE_CLIENT_ID is set but GOOGLE_CLIENT_SECRET is not, so OAuth cannot start. ' +
+      'Set GOOGLE_CLIENT_SECRET as well, or remove GOOGLE_CLIENT_ID and place a ' +
+      `credentials.json file at ${credentialsPath} instead.`
+    );
+  }
+  if (!envId && envSecret) {
+    return (
+      'GOOGLE_CLIENT_SECRET is set but GOOGLE_CLIENT_ID is not, so OAuth cannot start. ' +
+      'Set GOOGLE_CLIENT_ID as well, or remove GOOGLE_CLIENT_SECRET and place a ' +
+      `credentials.json file at ${credentialsPath} instead.`
+    );
+  }
+  return (
+    'No OAuth credentials found. Either set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, ' +
+    `or download your OAuth client JSON from the Google Cloud Console and save it as ${credentialsPath}. ` +
+    'Then run `npx @a-bonus/google-docs-mcp auth` to authorize.'
+  );
+}
+
 async function loadClientSecrets(): Promise<{
   client_id: string;
   client_secret: string;
@@ -120,26 +148,74 @@ async function loadClientSecrets(): Promise<{
   }
 
   // 2. credentials.json fallback
+  let content: string;
   try {
-    const content = await fs.readFile(CREDENTIALS_PATH, 'utf8');
-    const keys = JSON.parse(content);
-    const key = keys.installed || keys.web;
-    if (!key) {
-      throw new Error('Could not find client secrets in credentials.json.');
-    }
-    return {
-      client_id: key.client_id,
-      client_secret: key.client_secret,
-    };
+    content = await fs.readFile(CREDENTIALS_PATH, 'utf8');
   } catch (err: any) {
     if (err.code === 'ENOENT') {
+      throw new Error(describeMissingCredentials(CREDENTIALS_PATH, envId, envSecret));
+    }
+    if (err.code === 'EACCES') {
       throw new Error(
-        'No OAuth credentials found. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET ' +
-          'environment variables, or place a credentials.json file in the project root.'
+        `credentials.json exists at ${CREDENTIALS_PATH} but is not readable (EACCES). ` +
+          'Fix its permissions, or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET instead.'
       );
     }
     throw err;
   }
+
+  let keys: any;
+  try {
+    keys = JSON.parse(content);
+  } catch {
+    throw new Error(
+      `${CREDENTIALS_PATH} is not valid JSON. Re-download the OAuth client JSON from the ` +
+        'Google Cloud Console (APIs & Services -> Credentials -> your OAuth client -> Download JSON) ' +
+        'and save it unmodified.'
+    );
+  }
+
+  return extractClientSecrets(keys, CREDENTIALS_PATH);
+}
+
+/**
+ * Validates the shape of a parsed credentials.json and returns the OAuth client
+ * pair, or throws an error that says what is wrong with the file.
+ *
+ * Kept separate from the filesystem so every branch is testable, and because the
+ * shape errors are what users actually hit: issue #57 reported the failure
+ * surfacing as "Cannot destructure property 'client_secret' of
+ * 'credentials.installed' as it is undefined", which names no file and suggests
+ * no fix.
+ */
+export function extractClientSecrets(
+  keys: any,
+  credentialsPath: string
+): { client_id: string; client_secret: string } {
+  const key = keys?.installed || keys?.web;
+  if (!key) {
+    // Usually a service-account key or an API key rather than an OAuth client.
+    const shape =
+      Object.keys(keys ?? {})
+        .slice(0, 5)
+        .join(', ') || 'no top-level keys';
+    throw new Error(
+      `${credentialsPath} has no "installed" or "web" section, so it is not an OAuth client ` +
+        `file (found: ${shape}). Download an OAuth 2.0 Client ID of type "Desktop app" or ` +
+        '"Web application" from the Google Cloud Console; a service-account key will not work.'
+    );
+  }
+
+  const missing = ['client_id', 'client_secret'].filter((field) => !key[field]);
+  if (missing.length > 0) {
+    throw new Error(
+      `${credentialsPath} is missing ${missing.join(' and ')} inside its ` +
+        `"${keys.installed ? 'installed' : 'web'}" section. Re-download the OAuth client JSON ` +
+        'from the Google Cloud Console and save it unmodified.'
+    );
+  }
+
+  return { client_id: key.client_id, client_secret: key.client_secret };
 }
 
 // ---------------------------------------------------------------------------
@@ -185,17 +261,20 @@ async function authorizeWithServiceAccount(): Promise<JWT> {
 // ---------------------------------------------------------------------------
 
 async function loadSavedCredentialsIfExist(): Promise<OAuth2Client | null> {
+  const tokenPath = getTokenPath();
+  let credentials: OAuth2Client['credentials'];
   try {
-    const tokenPath = getTokenPath();
     const content = await fs.readFile(tokenPath, 'utf8');
-    const credentials = sanitizeStoredTokenCredentials(JSON.parse(content));
-    const { client_secret, client_id } = await loadClientSecrets();
-    const client = new google.auth.OAuth2(client_id, client_secret);
-    client.setCredentials(credentials);
-    return client;
+    credentials = sanitizeStoredTokenCredentials(JSON.parse(content));
   } catch {
     return null;
   }
+  // Outside the try: a missing or broken OAuth client should surface its own message rather than
+  // read as "no saved token".
+  const { client_secret, client_id } = await loadClientSecrets();
+  const client = new google.auth.OAuth2(client_id, client_secret);
+  client.setCredentials(credentials);
+  return client;
 }
 
 async function saveCredentials(client: OAuth2Client): Promise<void> {
@@ -240,12 +319,13 @@ async function authenticate(): Promise<OAuth2Client> {
   logger.info('Authorize this app by visiting this url:', authorizeUrl);
 
   const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
-  const timeout = setTimeout(() => {
-    server.close();
-  }, AUTH_TIMEOUT_MS);
 
   // Wait for the OAuth callback
   const code = await new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      server.close();
+      reject(new Error('Timed out after 5 minutes waiting for the Google authorization callback.'));
+    }, AUTH_TIMEOUT_MS);
     server.on('request', (req, res) => {
       const url = new URL(req.url!, `http://localhost:${port}`);
       const authCode = url.searchParams.get('code');
@@ -304,7 +384,7 @@ async function authenticate(): Promise<OAuth2Client> {
  * Resolution order:
  *   1. SERVICE_ACCOUNT_PATH env var -> service account JWT
  *   2. Saved token in ~/.config/google-docs-mcp/token.json -> OAuth2Client
- *   3. Interactive browser OAuth flow -> OAuth2Client (saves token for next time)
+ *   3. Otherwise throws, pointing at the `auth` subcommand (runAuthFlow)
  */
 export async function authorize(): Promise<OAuth2Client | JWT> {
   if (process.env.SERVICE_ACCOUNT_PATH) {
@@ -318,8 +398,13 @@ export async function authorize(): Promise<OAuth2Client | JWT> {
     logger.info('Using saved credentials.');
     return client;
   }
-  logger.info('No saved token found. Starting interactive authentication flow...');
-  return authenticate();
+  // The server's stderr is a log file nobody watches, so a browser flow started here would wait for
+  // a callback that never comes and hang every tool call. Point at the auth command instead.
+  throw new Error(
+    `No saved Google token at ${getTokenPath()}. Run the auth command once ` +
+      '(`npx @a-bonus/google-docs-mcp auth`, or `node dist/index.js auth` from a checkout) with the ' +
+      'same GOOGLE_MCP_PROFILE, then retry.'
+  );
 }
 
 /**

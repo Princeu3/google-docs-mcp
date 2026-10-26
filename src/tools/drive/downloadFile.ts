@@ -3,10 +3,12 @@ import { UserError, imageContent } from 'fastmcp';
 import { z } from 'zod';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { getDriveClient } from '../../clients.js';
 import { requestClients } from '../../remoteWrapper.js';
 import { createDownloadToken } from '../../downloadProxy.js';
+import { ensureWithinDownloadRoots, parseDownloadRoots } from './savePathGuard.js';
 
 const isRemote = process.env.MCP_TRANSPORT === 'httpStream';
 
@@ -98,6 +100,10 @@ export function register(server: FastMCP) {
       log.info(`Downloading file ${args.fileId}${args.savePath ? ` to ${args.savePath}` : ''}`);
 
       let resolvedSavePath: string | undefined;
+      // Downloads stream into this uniquely named sibling and are renamed onto the save path only on
+      // success, so a failed or refused download never truncates or deletes an existing file.
+      // Cleanup removes only this.
+      let tempPath: string | undefined;
       try {
         // 1. Get file metadata
         const metadataRes = await drive.files.get({
@@ -243,7 +249,16 @@ export function register(server: FastMCP) {
         }
         resolvedSavePath = path.resolve(resolvedSavePath);
 
+        // `savePath` is agent-controlled and reaches the filesystem directly, so
+        // confine it before creating directories or opening a write stream.
+        try {
+          resolvedSavePath = ensureWithinDownloadRoots(resolvedSavePath, parseDownloadRoots());
+        } catch (boundaryError: any) {
+          throw new UserError(boundaryError?.message || String(boundaryError));
+        }
+
         fs.mkdirSync(path.dirname(resolvedSavePath), { recursive: true });
+        tempPath = `${resolvedSavePath}.${randomUUID()}.part`;
 
         let outputMime: string;
         if (isWorkspace && exportMime) {
@@ -252,7 +267,7 @@ export function register(server: FastMCP) {
             { fileId: args.fileId, mimeType: exportMime },
             { responseType: 'stream' }
           );
-          await pipeline(res.data as any, fs.createWriteStream(resolvedSavePath));
+          await pipeline(res.data as any, fs.createWriteStream(tempPath, { flags: 'wx' }));
           outputMime = exportMime;
         } else {
           log.info(`Downloading blob file`);
@@ -260,9 +275,12 @@ export function register(server: FastMCP) {
             { fileId: args.fileId, alt: 'media', supportsAllDrives: true },
             { responseType: 'stream' }
           );
-          await pipeline(res.data as any, fs.createWriteStream(resolvedSavePath));
+          await pipeline(res.data as any, fs.createWriteStream(tempPath, { flags: 'wx' }));
           outputMime = originalMimeType;
         }
+
+        fs.renameSync(tempPath, resolvedSavePath);
+        tempPath = undefined;
 
         const sizeBytes = fs.statSync(resolvedSavePath).size;
 
@@ -287,9 +305,9 @@ export function register(server: FastMCP) {
 
         return JSON.stringify(result, null, 2);
       } catch (error: any) {
-        if (!isRemote && resolvedSavePath) {
+        if (tempPath) {
           try {
-            fs.unlinkSync(resolvedSavePath);
+            fs.unlinkSync(tempPath);
           } catch {
             /* file may not exist yet */
           }

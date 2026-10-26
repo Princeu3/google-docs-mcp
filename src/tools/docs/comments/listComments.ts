@@ -1,7 +1,6 @@
 import type { FastMCP } from 'fastmcp';
 import { UserError } from 'fastmcp';
-import { google } from 'googleapis';
-import { getDocsClient, getDriveClient, getAuthClient } from '../../../clients.js';
+import { getDriveClient } from '../../../clients.js';
 import { DocumentIdParameter } from '../../../types.js';
 
 export function register(server: FastMCP) {
@@ -12,33 +11,40 @@ export function register(server: FastMCP) {
     parameters: DocumentIdParameter,
     execute: async (args, { log }) => {
       log.info(`Listing comments for document ${args.documentId}`);
-      const docsClient = await getDocsClient();
-      const driveClient = await getDriveClient();
+      const drive = await getDriveClient();
 
       try {
-        // First get the document to have context
-        const doc = await docsClient.documents.get({ documentId: args.documentId });
+        // The field mask must name every field read below; Drive omits the rest.
+        const comments: any[] = [];
+        let pageToken: string | undefined;
+        do {
+          const response = await drive.comments.list({
+            fileId: args.documentId,
+            fields:
+              'nextPageToken,comments(id,content,quotedFileContent(value),author(displayName),createdTime,modifiedTime,resolved,replies(id))',
+            pageSize: 100,
+            pageToken,
+          });
+          comments.push(...(response.data.comments || []));
+          pageToken = response.data.nextPageToken || undefined;
+        } while (pageToken);
 
-        // Use Drive API v3 with proper fields to get quoted content
-        const authClient = await getAuthClient();
-        const drive = google.drive({ version: 'v3', auth: authClient });
-        const response = await drive.comments.list({
-          fileId: args.documentId,
-          fields: 'comments(id,content,quotedFileContent,author,createdTime,resolved)',
-          pageSize: 100,
-        });
-
-        const comments = (response.data.comments || []).map((comment: any) => ({
-          id: comment.id,
-          author: comment.author?.displayName || null,
-          content: comment.content,
-          quotedText: comment.quotedFileContent?.value || null,
-          resolved: comment.resolved || false,
-          createdTime: comment.createdTime,
-          modifiedTime: comment.modifiedTime,
-          replyCount: comment.replies?.length || 0,
-        }));
-        return JSON.stringify({ comments }, null, 2);
+        return JSON.stringify(
+          {
+            comments: comments.map((comment) => ({
+              id: comment.id,
+              author: comment.author?.displayName || null,
+              content: comment.content,
+              quotedText: comment.quotedFileContent?.value || null,
+              resolved: comment.resolved || false,
+              createdTime: comment.createdTime,
+              modifiedTime: comment.modifiedTime,
+              replyCount: comment.replies?.length || 0,
+            })),
+          },
+          null,
+          2
+        );
       } catch (error: any) {
         log.error(`Error listing comments: ${error.message || error}`);
         throw new UserError(`Failed to list comments: ${error.message || 'Unknown error'}`);

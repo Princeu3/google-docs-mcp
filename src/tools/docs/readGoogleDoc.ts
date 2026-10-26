@@ -32,6 +32,18 @@ export function register(server: FastMCP) {
         .describe(
           'The ID of the specific tab to read. If not specified, reads the first tab (or legacy document.body for documents without tabs).'
         ),
+      suggestionsViewMode: z
+        .enum([
+          'DEFAULT',
+          'SUGGESTIONS_INLINE',
+          'PREVIEW_SUGGESTIONS_ACCEPTED',
+          'PREVIEW_WITHOUT_SUGGESTIONS',
+        ])
+        .optional()
+        .default('PREVIEW_WITHOUT_SUGGESTIONS')
+        .describe(
+          "How to render suggestions: 'SUGGESTIONS_INLINE' shows pending insertions/deletions inline (use this for edit indices when suggestions exist), 'PREVIEW_SUGGESTIONS_ACCEPTED' previews with all suggestions applied, 'PREVIEW_WITHOUT_SUGGESTIONS' previews with all rejected (default)."
+        ),
     }),
     execute: async (args, { log }) => {
       const docs = await getDocsClient();
@@ -46,12 +58,13 @@ export function register(server: FastMCP) {
         const fields =
           args.format === 'json' || args.format === 'markdown'
             ? '*' // Get everything for structure analysis
-            : 'body(content(paragraph(elements(textRun(content)))))'; // Just text content
+            : // Just text content; table cells nest full StructuralElements, so take them whole.
+              'body(content(paragraph(elements(textRun(content))),table(tableRows(tableCells(content)))))';
 
         const res = await docs.documents.get({
           documentId: args.documentId,
           includeTabsContent: needsTabsContent,
-          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+          suggestionsViewMode: args.suggestionsViewMode ?? 'PREVIEW_WITHOUT_SUGGESTIONS',
           fields: needsTabsContent
             ? `title,documentId,${buildTabsFieldMask('documentTab(body,documentStyle,namedStyles,lists)')}`
             : fields,
