@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 import {
+  authorize,
   createStoredTokenPayload,
   describeMissingCredentials,
   extractClientSecrets,
@@ -129,5 +133,23 @@ describe('credentials.json shape validation (issue #57)', () => {
   it('does not crash on null or a non-object', () => {
     expect(() => extractClientSecrets(null, CREDS)).toThrow(/no "installed" or "web" section/);
     expect(() => extractClientSecrets('nonsense', CREDS)).toThrow(/no "installed" or "web"/);
+  });
+});
+
+describe('authorize() without a saved token', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('fails fast and points at the auth command instead of waiting on a browser flow', async () => {
+    // A browser flow inside the MCP server waits on a callback nobody can see, hanging every tool call.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gdm-auth-'));
+    vi.stubEnv('XDG_CONFIG_HOME', dir);
+    vi.stubEnv('GOOGLE_MCP_PROFILE', 'personal');
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'id');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'secret');
+    vi.stubEnv('SERVICE_ACCOUNT_PATH', '');
+
+    await expect(authorize()).rejects.toThrow(
+      `No saved Google token at ${path.join(dir, 'google-docs-mcp', 'personal', 'token.json')}`
+    );
   });
 });

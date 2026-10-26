@@ -261,17 +261,20 @@ async function authorizeWithServiceAccount(): Promise<JWT> {
 // ---------------------------------------------------------------------------
 
 async function loadSavedCredentialsIfExist(): Promise<OAuth2Client | null> {
+  const tokenPath = getTokenPath();
+  let credentials: OAuth2Client['credentials'];
   try {
-    const tokenPath = getTokenPath();
     const content = await fs.readFile(tokenPath, 'utf8');
-    const credentials = sanitizeStoredTokenCredentials(JSON.parse(content));
-    const { client_secret, client_id } = await loadClientSecrets();
-    const client = new google.auth.OAuth2(client_id, client_secret);
-    client.setCredentials(credentials);
-    return client;
+    credentials = sanitizeStoredTokenCredentials(JSON.parse(content));
   } catch {
     return null;
   }
+  // Outside the try: a missing or broken OAuth client should surface its own message rather than
+  // read as "no saved token".
+  const { client_secret, client_id } = await loadClientSecrets();
+  const client = new google.auth.OAuth2(client_id, client_secret);
+  client.setCredentials(credentials);
+  return client;
 }
 
 async function saveCredentials(client: OAuth2Client): Promise<void> {
@@ -316,12 +319,13 @@ async function authenticate(): Promise<OAuth2Client> {
   logger.info('Authorize this app by visiting this url:', authorizeUrl);
 
   const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
-  const timeout = setTimeout(() => {
-    server.close();
-  }, AUTH_TIMEOUT_MS);
 
   // Wait for the OAuth callback
   const code = await new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      server.close();
+      reject(new Error('Timed out after 5 minutes waiting for the Google authorization callback.'));
+    }, AUTH_TIMEOUT_MS);
     server.on('request', (req, res) => {
       const url = new URL(req.url!, `http://localhost:${port}`);
       const authCode = url.searchParams.get('code');
@@ -380,7 +384,7 @@ async function authenticate(): Promise<OAuth2Client> {
  * Resolution order:
  *   1. SERVICE_ACCOUNT_PATH env var -> service account JWT
  *   2. Saved token in ~/.config/google-docs-mcp/token.json -> OAuth2Client
- *   3. Interactive browser OAuth flow -> OAuth2Client (saves token for next time)
+ *   3. Otherwise throws, pointing at the `auth` subcommand (runAuthFlow)
  */
 export async function authorize(): Promise<OAuth2Client | JWT> {
   if (process.env.SERVICE_ACCOUNT_PATH) {
@@ -394,8 +398,13 @@ export async function authorize(): Promise<OAuth2Client | JWT> {
     logger.info('Using saved credentials.');
     return client;
   }
-  logger.info('No saved token found. Starting interactive authentication flow...');
-  return authenticate();
+  // The server's stderr is a log file nobody watches, so a browser flow started here would wait for
+  // a callback that never comes and hang every tool call. Point at the auth command instead.
+  throw new Error(
+    `No saved Google token at ${getTokenPath()}. Run the auth command once ` +
+      '(`npx @a-bonus/google-docs-mcp auth`, or `node dist/index.js auth` from a checkout) with the ' +
+      'same GOOGLE_MCP_PROFILE, then retry.'
+  );
 }
 
 /**
