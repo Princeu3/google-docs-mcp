@@ -47,6 +47,7 @@ function initializeWithoutCredentials(timeoutMs = 20_000): Promise<any> {
         ...process.env,
         HOME: emptyHome,
         USERPROFILE: emptyHome,
+        XDG_CONFIG_HOME: emptyHome,
         // Make sure no ambient configuration authorizes the server for us.
         GOOGLE_CLIENT_ID: '',
         GOOGLE_CLIENT_SECRET: '',
