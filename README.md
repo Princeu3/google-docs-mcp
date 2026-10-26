@@ -123,6 +123,16 @@ Tools across Google Docs, Sheets, and Drive:
 | `resolveComment` | Mark a comment as resolved             |
 | `deleteComment`  | Remove a comment                       |
 
+### Suggestions
+
+Write tools accept `suggestMode: true` to apply edits as pending suggestions
+for review instead of direct edits (requires Node 22+; `googleapis@184`).
+
+| Tool                | Description                                          |
+| ------------------- | ---------------------------------------------------- |
+| `listSuggestions`   | View pending suggestions with author, date, and IDs  |
+| `manageSuggestions` | Accept, reject, or delete pending suggestion threads |
+
 ### Google Sheets
 
 | Tool                          | Description                                                           |
@@ -191,6 +201,9 @@ Tools across Google Docs, Sheets, and Drive:
 | `listDriveFiles`             | List any file type in Drive with filters    |
 | `searchDriveFiles`           | Search all Drive files by name or content   |
 | `downloadFile`               | Download a file's content                   |
+| `createMarkdownFile`         | Create a native Markdown (.md) file         |
+| `readMarkdownFile`           | Read a native .md file's raw source         |
+| `updateMarkdownFile`         | Replace or append a .md file's raw source   |
 
 ### Gmail
 
