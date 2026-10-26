@@ -79,6 +79,15 @@ describe('ensureWithinDownloadRoots', () => {
     expect(() => ensureWithinDownloadRoots(target, [root])).toThrow(/outside/i);
   });
 
+  it('rejects a dangling symlink whose target is outside the root', () => {
+    // existsSync() follows links, so a broken link looked like a new file inside the root, and
+    // createWriteStream() would then create its target outside it.
+    const link = path.join(root, 'dangling.txt');
+    fs.symlinkSync(path.join(outside, 'created-by-download.txt'), link);
+
+    expect(() => ensureWithinDownloadRoots(link, [root])).toThrow();
+  });
+
   it('allows a second configured root', () => {
     const target = path.join(outside, 'report.md');
     expect(ensureWithinDownloadRoots(target, [root, outside])).toBe(target);

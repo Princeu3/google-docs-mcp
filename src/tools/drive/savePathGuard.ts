@@ -35,11 +35,14 @@ function isInside(child: string, parent: string): boolean {
   return child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
 }
 
-/** Deepest ancestor of `target` that exists on disk, as a literal path. */
+/**
+ * Deepest ancestor of `target` that exists on disk, as a literal path. Uses lstat so a dangling
+ * symlink counts as existing; existsSync() follows it and would treat it as a new file.
+ */
 function nearestExistingAncestor(target: string): string {
   let current = target;
   for (;;) {
-    if (fs.existsSync(current)) return current;
+    if (fs.lstatSync(current, { throwIfNoEntry: false })) return current;
     const parent = path.dirname(current);
     if (parent === current) return current;
     current = parent;
@@ -60,8 +63,12 @@ function canonicalize(target: string): string {
   let realAncestor: string;
   try {
     realAncestor = fs.realpathSync(ancestor);
-  } catch {
-    return absolute;
+  } catch (error: any) {
+    // The entry exists but cannot be resolved (a dangling symlink, a loop, no access). Fail
+    // closed: writing through it could land anywhere.
+    throw new Error(
+      `Cannot resolve "${ancestor}" (${error?.code || error}); refusing to write there.`
+    );
   }
   return path.resolve(realAncestor, path.relative(ancestor, absolute));
 }
