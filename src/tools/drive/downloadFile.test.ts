@@ -87,6 +87,7 @@ vi.mock('node:fs', async (importOriginal) => {
       statSync: vi.fn(() => ({ size: 2048 })),
       readFileSync: vi.fn(() => 'mock-text-content'),
       unlinkSync: vi.fn(),
+      renameSync: vi.fn(),
     },
   };
 });
@@ -107,6 +108,7 @@ const mockCreateWriteStream = vi.mocked(fs.createWriteStream);
 const mockStatSync = vi.mocked(fs.statSync);
 const mockReadFileSync = vi.mocked(fs.readFileSync);
 const mockUnlinkSync = vi.mocked(fs.unlinkSync);
+const mockRenameSync = vi.mocked(fs.renameSync);
 const mockPipeline = vi.mocked(pipeline);
 
 let toolExecute: (args: any, context: any) => Promise<string>;
@@ -307,7 +309,12 @@ describe('downloadFile integration', () => {
       await toolExecute({ fileId: 'f1' }, { log: mockLog });
 
       expect(mockMkdirSync).toHaveBeenCalledWith(process.cwd(), { recursive: true });
-      expect(mockCreateWriteStream).toHaveBeenCalledWith(path.join(process.cwd(), 'report.pdf'));
+      // Streams into a sibling temp file, then renames it onto the target.
+      const target = path.join(process.cwd(), 'report.pdf');
+      const [tempPath, flags] = mockCreateWriteStream.mock.calls[0] as any[];
+      expect(tempPath).toMatch(/report\.pdf\.[0-9a-f-]+\.part$/);
+      expect(flags).toEqual({ flags: 'wx' });
+      expect(mockRenameSync).toHaveBeenCalledWith(tempPath, target);
     });
 
     it('should default to cwd + name + .md for workspace docs', async () => {
@@ -367,7 +374,11 @@ describe('downloadFile integration', () => {
         toolExecute({ fileId: 'f1', savePath: './downloads/partial.pdf' }, { log: mockLog })
       ).rejects.toThrow(/network timeout/);
 
-      expect(mockUnlinkSync).toHaveBeenCalledWith(path.resolve('./downloads/partial.pdf'));
+      // Only the temp file is removed; the target was never opened, so an existing file survives.
+      const target = path.resolve('./downloads/partial.pdf');
+      expect(mockUnlinkSync).toHaveBeenCalledWith(mockCreateWriteStream.mock.calls[0][0]);
+      expect(mockUnlinkSync).not.toHaveBeenCalledWith(target);
+      expect(mockRenameSync).not.toHaveBeenCalled();
     });
 
     it('should leave an existing file alone when the download fails before writing', async () => {
@@ -382,7 +393,8 @@ describe('downloadFile integration', () => {
         toolExecute({ fileId: 'f1', savePath: './downloads/existing.pdf' }, { log: mockLog })
       ).rejects.toThrow(/quota/);
 
-      expect(mockUnlinkSync).not.toHaveBeenCalled();
+      expect(mockUnlinkSync).not.toHaveBeenCalledWith(path.resolve('./downloads/existing.pdf'));
+      expect(mockRenameSync).not.toHaveBeenCalled();
     });
   });
 

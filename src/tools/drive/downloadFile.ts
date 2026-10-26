@@ -3,6 +3,7 @@ import { UserError, imageContent } from 'fastmcp';
 import { z } from 'zod';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { getDriveClient } from '../../clients.js';
 import { requestClients } from '../../remoteWrapper.js';
@@ -99,8 +100,10 @@ export function register(server: FastMCP) {
       log.info(`Downloading file ${args.fileId}${args.savePath ? ` to ${args.savePath}` : ''}`);
 
       let resolvedSavePath: string | undefined;
-      // Set only once this call opens the file, so cleanup never deletes a path it was refused or never wrote.
-      let createdPath: string | undefined;
+      // Downloads stream into this uniquely named sibling and are renamed onto the save path only on
+      // success, so a failed or refused download never truncates or deletes an existing file.
+      // Cleanup removes only this.
+      let tempPath: string | undefined;
       try {
         // 1. Get file metadata
         const metadataRes = await drive.files.get({
@@ -255,6 +258,7 @@ export function register(server: FastMCP) {
         }
 
         fs.mkdirSync(path.dirname(resolvedSavePath), { recursive: true });
+        tempPath = `${resolvedSavePath}.${randomUUID()}.part`;
 
         let outputMime: string;
         if (isWorkspace && exportMime) {
@@ -263,8 +267,7 @@ export function register(server: FastMCP) {
             { fileId: args.fileId, mimeType: exportMime },
             { responseType: 'stream' }
           );
-          createdPath = resolvedSavePath;
-          await pipeline(res.data as any, fs.createWriteStream(resolvedSavePath));
+          await pipeline(res.data as any, fs.createWriteStream(tempPath, { flags: 'wx' }));
           outputMime = exportMime;
         } else {
           log.info(`Downloading blob file`);
@@ -272,10 +275,12 @@ export function register(server: FastMCP) {
             { fileId: args.fileId, alt: 'media', supportsAllDrives: true },
             { responseType: 'stream' }
           );
-          createdPath = resolvedSavePath;
-          await pipeline(res.data as any, fs.createWriteStream(resolvedSavePath));
+          await pipeline(res.data as any, fs.createWriteStream(tempPath, { flags: 'wx' }));
           outputMime = originalMimeType;
         }
+
+        fs.renameSync(tempPath, resolvedSavePath);
+        tempPath = undefined;
 
         const sizeBytes = fs.statSync(resolvedSavePath).size;
 
@@ -300,9 +305,9 @@ export function register(server: FastMCP) {
 
         return JSON.stringify(result, null, 2);
       } catch (error: any) {
-        if (createdPath) {
+        if (tempPath) {
           try {
-            fs.unlinkSync(createdPath);
+            fs.unlinkSync(tempPath);
           } catch {
             /* file may not exist yet */
           }
