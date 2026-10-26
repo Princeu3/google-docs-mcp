@@ -58,7 +58,8 @@ export function register(server: FastMCP) {
         const fields =
           args.format === 'json' || args.format === 'markdown'
             ? '*' // Get everything for structure analysis
-            : 'body(content(paragraph(elements(textRun(content)))))'; // Just text content
+            : // Just text content; table cells nest full StructuralElements, so take them whole.
+              'body(content(paragraph(elements(textRun(content))),table(tableRows(tableCells(content)))))';
 
         const res = await docs.documents.get({
           documentId: args.documentId,

@@ -30,7 +30,10 @@ export function register(server: FastMCP) {
       try {
         // First, get the text content that will be quoted
         const docsClient = await getDocsClient();
-        const doc = await docsClient.documents.get({ documentId: args.documentId });
+        const doc = await docsClient.documents.get({
+          documentId: args.documentId,
+          fields: 'body(content(paragraph(elements(startIndex,endIndex,textRun(content)))))',
+        });
 
         // Extract the quoted text from the document
         let quotedText = '';
