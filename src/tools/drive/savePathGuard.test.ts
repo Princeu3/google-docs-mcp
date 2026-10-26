@@ -88,6 +88,16 @@ describe('ensureWithinDownloadRoots', () => {
     expect(() => ensureWithinDownloadRoots(link, [root])).toThrow();
   });
 
+  it('ignores an unresolvable root instead of refusing saves into the others', () => {
+    // e.g. a root under ~/Developer while the drive it links to is unmounted.
+    const deadRoot = path.join(root, 'dead-link');
+    fs.symlinkSync(path.join(outside, 'unmounted'), deadRoot);
+
+    const target = path.join(outside, 'ok.md');
+    expect(ensureWithinDownloadRoots(target, [path.join(deadRoot, 'sub'), outside])).toBe(target);
+    expect(() => ensureWithinDownloadRoots(target, [path.join(deadRoot, 'sub')])).toThrow();
+  });
+
   it('allows a second configured root', () => {
     const target = path.join(outside, 'report.md');
     expect(ensureWithinDownloadRoots(target, [root, outside])).toBe(target);

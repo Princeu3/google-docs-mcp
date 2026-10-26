@@ -84,7 +84,15 @@ function canonicalize(target: string): string {
 export function ensureWithinDownloadRoots(savePath: string, roots: string[]): string {
   const resolved = path.resolve(savePath);
   const realTarget = canonicalize(resolved);
-  const realRoots = roots.map((root) => canonicalize(root));
+  // Drop a root that cannot be resolved (say, a link to an unmounted drive) rather than failing
+  // saves into the others; with no root left, every target is refused.
+  const realRoots = roots.flatMap((root) => {
+    try {
+      return [canonicalize(root)];
+    } catch {
+      return [];
+    }
+  });
 
   if (!realRoots.some((root) => isInside(realTarget, root))) {
     throw new Error(
