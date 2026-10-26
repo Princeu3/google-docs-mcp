@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 git pull --ff-only "${1:-origin}" main
-npm install --silent
+npm ci --silent
 npm run build
 npm test
 echo "Done — restart Claude Code to load the new build."
