@@ -99,6 +99,8 @@ export function register(server: FastMCP) {
       log.info(`Downloading file ${args.fileId}${args.savePath ? ` to ${args.savePath}` : ''}`);
 
       let resolvedSavePath: string | undefined;
+      // Set only once this call opens the file, so cleanup never deletes a path it was refused or never wrote.
+      let createdPath: string | undefined;
       try {
         // 1. Get file metadata
         const metadataRes = await drive.files.get({
@@ -261,6 +263,7 @@ export function register(server: FastMCP) {
             { fileId: args.fileId, mimeType: exportMime },
             { responseType: 'stream' }
           );
+          createdPath = resolvedSavePath;
           await pipeline(res.data as any, fs.createWriteStream(resolvedSavePath));
           outputMime = exportMime;
         } else {
@@ -269,6 +272,7 @@ export function register(server: FastMCP) {
             { fileId: args.fileId, alt: 'media', supportsAllDrives: true },
             { responseType: 'stream' }
           );
+          createdPath = resolvedSavePath;
           await pipeline(res.data as any, fs.createWriteStream(resolvedSavePath));
           outputMime = originalMimeType;
         }
@@ -296,9 +300,9 @@ export function register(server: FastMCP) {
 
         return JSON.stringify(result, null, 2);
       } catch (error: any) {
-        if (!isRemote && resolvedSavePath) {
+        if (createdPath) {
           try {
-            fs.unlinkSync(resolvedSavePath);
+            fs.unlinkSync(createdPath);
           } catch {
             /* file may not exist yet */
           }

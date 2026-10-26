@@ -369,6 +369,21 @@ describe('downloadFile integration', () => {
 
       expect(mockUnlinkSync).toHaveBeenCalledWith(path.resolve('./downloads/partial.pdf'));
     });
+
+    it('should leave an existing file alone when the download fails before writing', async () => {
+      const { filesGet } = createMockDrive();
+      filesGet.mockImplementation((params: any) =>
+        params?.alt === 'media'
+          ? Promise.reject(Object.assign(new Error('quota'), { code: 429 }))
+          : Promise.resolve({ data: { name: 'report.pdf', mimeType: 'application/pdf' } })
+      );
+
+      await expect(
+        toolExecute({ fileId: 'f1', savePath: './downloads/existing.pdf' }, { log: mockLog })
+      ).rejects.toThrow(/quota/);
+
+      expect(mockUnlinkSync).not.toHaveBeenCalled();
+    });
   });
 
   describe('absolute path outside the download roots', () => {
@@ -389,6 +404,8 @@ describe('downloadFile integration', () => {
 
       expect(mockMkdirSync).not.toHaveBeenCalled();
       expect(mockCreateWriteStream).not.toHaveBeenCalled();
+      // The error cleanup must not delete a file this call refused to touch.
+      expect(mockUnlinkSync).not.toHaveBeenCalled();
     });
 
     it('should accept the same path when the operator allows that root', async () => {
@@ -416,6 +433,7 @@ describe('downloadFile integration', () => {
       ).rejects.toThrow(UserError);
 
       expect(mockCreateWriteStream).not.toHaveBeenCalled();
+      expect(mockUnlinkSync).not.toHaveBeenCalled();
     });
   });
 
